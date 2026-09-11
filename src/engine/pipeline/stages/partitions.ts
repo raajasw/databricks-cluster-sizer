@@ -156,7 +156,13 @@ export const partitioning: NamedStage = {
         waves, advisoryPartitionBytes: advisoryBytes,
         effectivePartitionBytes, partitionsCapped,
       },
-      rationale: `${aqeNote}${cappedNote} ${splitNote}`.trim(),
+      rationale:
+        (`${aqeNote}${cappedNote} ${splitNote}`).trim() +
+        ' All of this assumes data spread evenly across partitions. Real keys rarely are, ' +
+        'and a skewed partition will be larger and slower than the average shown here -- but ' +
+        'by how much depends on your key distribution, which cannot be inferred from volume ' +
+        'or format. Size for the even case, then look at the max-versus-median task duration ' +
+        'in the Spark UI after a run and tune from what you actually see.',
       confidence: 'estimated',
       citations: [
         { label: 'spark.sql.shuffle.partitions', kind: 'spark-config' },

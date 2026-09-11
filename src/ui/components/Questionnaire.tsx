@@ -153,23 +153,10 @@ export function Questionnaire({ input, onChange }: Props) {
         </select>
       </div>
 
-      <div className="row">
-        <div className="field">
-          <label>Shuffle stages</label>
-          <input type="number" min={0} value={input.pipeline.shuffleStages}
-                 onChange={(e) => setPipeline({ shuffleStages: Number(e.target.value) || 0 })} />
-        </div>
-        <div className="field">
-          <label>Known skew</label>
-          <select value={input.pipeline.knownSkew}
-                  onChange={(e) => setPipeline({
-                    knownSkew: e.target.value as 'none' | 'suspected' | 'severe',
-                  })}>
-            <option value="none">None</option>
-            <option value="suspected">Suspected</option>
-            <option value="severe">Severe</option>
-          </select>
-        </div>
+      <div className="field">
+        <label>Shuffle stages</label>
+        <input type="number" min={0} value={input.pipeline.shuffleStages}
+               onChange={(e) => setPipeline({ shuffleStages: Number(e.target.value) || 0 })} />
       </div>
 
       <div className="field">

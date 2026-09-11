@@ -91,6 +91,12 @@ export default function App() {
               </div>
 
               <div className="uncertainty-note">
+                <strong>This assumes data spread evenly across partitions.</strong> Real keys
+                rarely are, and a skewed partition will be bigger and slower than the average
+                here — but by how much depends on your key distribution, which nothing in this
+                form can reveal. Size for the even case, then tune from what the Spark UI shows
+                after a real run.
+                <br /><br />
                 Memory figures are sized from the pessimistic end of each range, not the
                 midpoint: running out of memory three hours into a run costs far more than
                 modest overprovisioning. Ranges are shown rather than collapsed because the
@@ -131,9 +137,9 @@ export default function App() {
             <div className="panel">
               <h2>After your first run</h2>
               <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '0 0 10px' }}>
-                This is a starting point, not an oracle. The least reliable inputs here are
-                the inflation factor and throughput per core; one real run tells you more
-                than any estimate. Open the Spark UI and check:
+                This is a starting point, not an oracle. It assumes even data distribution,
+                and the least reliable inputs are the inflation factor and throughput per core.
+                One real run tells you more than any estimate. Open the Spark UI and check:
               </p>
               <table className="conf-table">
                 <tbody>
@@ -154,8 +160,11 @@ export default function App() {
                   <tr>
                     <td><b>Task duration spread</b></td>
                     <td className="conf-note">
-                      Stages tab, max vs median. A large gap is skew — enable AQE skew join
-                      handling.
+                      Stages tab, max vs median. This is where skew shows up, and it is the
+                      one thing above that the sizing above cannot predict for you. A max far
+                      above the median means a few keys dominate: turn on
+                      <code> spark.sql.adaptive.skewJoin.enabled</code>, or salt the join key
+                      if AQE is not enough. Expect to iterate here.
                     </td>
                   </tr>
                   <tr>

@@ -81,7 +81,19 @@ export interface PipelineShape {
   /** Roughly the number of shuffle boundaries. */
   shuffleStages: number;
   largestJoinBuildSideBytes?: Bytes;
-  knownSkew: 'none' | 'suspected' | 'severe';
+  /*
+   * Deliberately absent: skew.
+   *
+   * Sizing here assumes data is EVENLY DISTRIBUTED across partitions. Skew is a
+   * property of your key distribution, which cannot be derived from volume,
+   * format or query shape -- any factor applied for it would be invented, and
+   * an invented number in a memory calculation is worse than no number.
+   *
+   * Skew is handled where it belongs: measured from task-duration spread in the
+   * Spark UI after a real run, then addressed with AQE skew-join handling,
+   * salting, or a repartition. The tool's job is to give the engineer a
+   * defensible starting point; theirs is to tune from observed behaviour.
+   */
   /** Share of the working set deliberately cached for reuse. */
   cacheWorkingSetFraction: number;
   /** Whether caching goes through the DataFrame API (compressed columnar). */

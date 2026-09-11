@@ -224,7 +224,9 @@ export const unifiedMemorySplit: NamedStage = {
         'objects and Spark internal metadata. The storage floor is an eviction-immunity ' +
         'line, not a reservation: execution may borrow the entire pool and evict cached ' +
         'blocks down to that floor, while storage can never evict execution. ' +
-        `The number that actually governs spill is the per-task-slot share: ${fmtBytes(perTask)}.`,
+        `The number that actually governs spill is the per-task-slot share: ${fmtBytes(perTask)}. ` +
+        'That figure assumes partitions of roughly equal size; a skewed partition consumes ' +
+        'more and may spill while average ones do not.',
       confidence: 'documented',
       citations: [
         { label: 'spark.memory.fraction', kind: 'spark-config' },

@@ -75,3 +75,32 @@ describe('engine end to end', () => {
     }
   });
 });
+
+describe('scope boundary: even distribution', () => {
+  it('models no skew factor anywhere in the sizing math', () => {
+    // Deliberate design boundary. Skew depends on key distribution, which
+    // cannot be inferred from volume, format or query shape -- so the engine
+    // sizes for the even case and says so, rather than inventing a factor.
+    // If a future change adds a skew multiplier to the memory math, this test
+    // should fail and the change should be argued for explicitly.
+    const rec = computeRecommendation(SCENARIOS['laptop-big-join']);
+    const r = rec.primary;
+
+    // Per-task memory is a clean division of the pool by task slots.
+    const m = r.executor.memoryBreakdown;
+    expect(m.perTaskExecutionAtFullParallelism).toBeCloseTo(
+      m.unifiedTotal / r.executor.coresPerExecutor, 0,
+    );
+
+    // Waves are a clean division of partitions by slots.
+    expect(r.parallelism.wavesPerStage.mid).toBeCloseTo(
+      r.parallelism.shufflePartitions / r.parallelism.totalTaskSlots, 4,
+    );
+  });
+
+  it('tells the user it assumed even distribution', () => {
+    const rec = computeRecommendation(SCENARIOS['laptop-big-join']);
+    const trace = rec.primary.trace.map((s) => s.rationale).join(' ');
+    expect(trace).toMatch(/evenly|equal size/i);
+  });
+});

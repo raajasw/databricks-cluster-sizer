@@ -21,7 +21,6 @@ export const laptopSmallData: WorkloadInput = {
   pipeline: {
     dominantQueryShape: 'aggregation',
     shuffleStages: 1,
-    knownSkew: 'none',
     cacheWorkingSetFraction: 0,
     cachesViaDataFrameApi: true,
   },
@@ -47,7 +46,6 @@ export const laptopBigJoin: WorkloadInput = {
   pipeline: {
     dominantQueryShape: 'shuffle-join',
     shuffleStages: 3,
-    knownSkew: 'suspected',
     cacheWorkingSetFraction: 0.3,
     cachesViaDataFrameApi: true,
   },
@@ -66,7 +64,6 @@ export const gzipTrap: WorkloadInput = {
   pipeline: {
     dominantQueryShape: 'scan-filter-write',
     shuffleStages: 0,
-    knownSkew: 'none',
     cacheWorkingSetFraction: 0,
     cachesViaDataFrameApi: true,
   },

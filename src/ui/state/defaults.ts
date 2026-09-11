@@ -21,7 +21,6 @@ export const DEFAULT_INPUT: WorkloadInput = {
   pipeline: {
     dominantQueryShape: 'shuffle-join',
     shuffleStages: 2,
-    knownSkew: 'none',
     cacheWorkingSetFraction: 0,
     cachesViaDataFrameApi: true,
   },
@@ -83,7 +82,7 @@ export const PRESETS: Preset[] = [
       },
       pipeline: {
         ...DEFAULT_INPUT.pipeline, dominantQueryShape: 'shuffle-join',
-        shuffleStages: 3, knownSkew: 'suspected',
+        shuffleStages: 3,
       },
       platformInput: {
         platform: 'local',
