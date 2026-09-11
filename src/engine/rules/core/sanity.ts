@@ -32,7 +32,7 @@ const dataTooSmallForSpark: Rule = {
     // pessimistic end, while "would this fit on one machine" wants the typical
     // case -- judging feasibility by the worst case would never recommend the
     // simpler tool.
-    const working = ctx.result.memory.workingSetBytes.mid;
+    const working = ctx.result.memory.inflatedScannedBytes.mid;
     const tolerant = SINGLE_NODE_TOLERANT_SHAPES.includes(
       ctx.input.pipeline.dominantQueryShape,
     );

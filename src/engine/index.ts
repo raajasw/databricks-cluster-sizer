@@ -158,6 +158,17 @@ function emptyInflation(): InflationBreakdown {
 }
 
 function buildVerdict(result: SizingResult, findings: ReturnType<typeof evaluateRules>): Verdict {
+  // Blockers first: a job that cannot run outranks every other observation,
+  // including the advice to use something simpler than Spark.
+  const blockersFirst = findings.filter((f) => f.severity === 'blocker');
+  if (blockersFirst.length > 0) {
+    return {
+      level: 'will-fail',
+      headline: blockersFirst[0]!.title,
+      reasoning: blockersFirst.map((f) => f.message),
+    };
+  }
+
   const dontUseSpark = findings.find((f) => f.ruleId === 'data-too-small-for-spark');
   if (dontUseSpark) {
     // Severity distinguishes "clearly fits one machine" from "borderline".

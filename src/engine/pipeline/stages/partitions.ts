@@ -68,8 +68,17 @@ export const partitioning: NamedStage = {
     }
 
     // Shuffle partitions: with AQE on, a static count is the wrong knob.
+    // Partition size is a TARGET, not a constraint. When the cluster is fixed
+    // (local mode, or a pinned budget), honouring the target blindly produces
+    // thousands of waves. The wave band is the real objective, so where the two
+    // conflict, grow the partitions and record that we did.
     const targetShuffleBytes = ctx.tunables.targetShufflePartitionBytes;
-    const computed = Math.max(1, Math.ceil(sizingValue(inflated) / targetShuffleBytes));
+    const idealCount = Math.max(1, Math.ceil(sizingValue(inflated) / targetShuffleBytes));
+
+    const maxByWaves = Math.max(1, totalTaskSlots * ctx.tunables.targetWavesMax);
+    const computed = Math.min(idealCount, maxByWaves);
+    const partitionsCapped = computed < idealCount;
+    const effectivePartitionBytes = sizingValue(inflated) / computed;
 
     let shufflePartitions: number;
     let aqeNote: string;
@@ -95,6 +104,16 @@ export const partitioning: NamedStage = {
 
     const pinned = ctx.input.cluster.pinnedShufflePartitions;
     if (pinned) shufflePartitions = pinned;
+
+    const cappedNote = partitionsCapped
+      ? ` The ${fmtBytes(targetShuffleBytes)} partition target would need ` +
+        `${idealCount.toLocaleString()} partitions and ` +
+        `${Math.round(idealCount / totalTaskSlots).toLocaleString()} waves on this cluster, so ` +
+        `it is capped at ${ctx.tunables.targetWavesMax} waves and each partition carries about ` +
+        `${fmtBytes(effectivePartitionBytes)} instead. Larger partitions mean more memory per ` +
+        'task, which is the tradeoff for not running thousands of sequential waves -- if that ' +
+        'does not fit, the cluster is genuinely too small rather than mis-tuned.'
+      : '';
 
     const advisoryBytes = ctx.tunables.advisoryPartitionBytes;
     const expectedPostAqe = ctx.input.aqeEnabled
@@ -135,8 +154,9 @@ export const partitioning: NamedStage = {
       outputs: {
         inputPartitions, shufflePartitions, totalTaskSlots,
         waves, advisoryPartitionBytes: advisoryBytes,
+        effectivePartitionBytes, partitionsCapped,
       },
-      rationale: `${aqeNote} ${splitNote}`.trim(),
+      rationale: `${aqeNote}${cappedNote} ${splitNote}`.trim(),
       confidence: 'estimated',
       citations: [
         { label: 'spark.sql.shuffle.partitions', kind: 'spark-config' },
@@ -174,7 +194,14 @@ export const shuffleStorage: NamedStage = {
     const peakOnDisk = scaleRange(shuffleWrite, shuffleStages > 2 ? 2 : 1);
 
     // Per-partition demand against per-task execution memory decides spill.
-    const perPartition = divRange(inflated, point(parallelism.shufflePartitions));
+    // Query amplification belongs HERE: a sort-merge join holds sort buffers
+    // for its partition on top of the partition itself.
+    const amplification = (ctx.draft.scratch['queryAmplification'] as Range | undefined)
+      ?? point(1);
+    const perPartition = mulRange(
+      divRange(inflated, point(parallelism.shufflePartitions)),
+      amplification,
+    );
     const { ratio, predicted } = computeSpillPressure(perPartition, perTask);
 
     const spillBytes = predicted
@@ -213,7 +240,7 @@ export const shuffleStorage: NamedStage = {
         `shuffle write = ${fmtRange(inflated, 'bytes')} x compression ` +
         `= ${fmtRange(shuffleWrite, 'bytes')}\n` +
         `per partition = ${fmtRange(inflated, 'bytes')} / ${parallelism.shufflePartitions} ` +
-        `= ${fmtRange(perPartition, 'bytes')}\n` +
+        `x ${amplification.mid.toFixed(1)}x amplification = ${fmtRange(perPartition, 'bytes')}\n` +
         `spill pressure = ${fmtRange(perPartition, 'bytes')} / ${fmtBytes(perTask)} per task slot ` +
         `= ${fmtRange(ratio)}x\n` +
         `disk per executor = ${fmtBytes(perExecutorDisk)}`,
@@ -265,10 +292,9 @@ export const driverSizing: NamedStage = {
     );
 
     if (isLocal) {
-      // In local mode the driver JVM IS the executor, so it must hold the
-      // whole working set, not just driver-side structures.
-      const allocatable = ctx.draft.allocatable;
-      if (allocatable) heap = bytes(allocatable.memory);
+      // The driver JVM IS the executor here, so report the one heap that
+      // actually exists rather than inventing a second figure.
+      heap = ctx.draft.heapBytes ?? heap;
     }
 
     const maxResultSize = maxBytes(
@@ -291,7 +317,7 @@ export const driverSizing: NamedStage = {
       id: 'driver-sizing',
       title: 'Driver',
       formula: isLocal
-        ? `local mode: driver heap = all allocatable memory = ${fmtBytes(heap)}`
+        ? `local mode: one JVM, so driver heap = executor heap = ${fmtBytes(heap)}`
         : `heap = max(${fmtBytes(ctx.tunables.driverMemoryFloor)} floor, ` +
           `${fmtBytes(collectBytes)} collect x 1.5 + ${fmtBytes(broadcastBytes)} broadcast x 2 ` +
           `+ ${fmtBytes(taskBookkeeping)} task bookkeeping) = ${fmtBytes(heap)}`,
@@ -300,8 +326,8 @@ export const driverSizing: NamedStage = {
         driverHeap: heap, driverCores: driver.cores, maxResultSize,
       },
       rationale: isLocal
-        ? 'In local mode the driver JVM also runs every task, so it holds the entire working ' +
-          'set. This is the only memory setting that matters here.'
+        ? 'In local mode the driver JVM also runs every task, so there is exactly one heap. ' +
+          'spark.driver.memory is the only memory setting that has any effect.'
         : 'A driver is not a small executor. It is sized by what actually lands there: ' +
           'collected results, the build side of broadcast joins materialized before ' +
           'broadcasting, and DAG bookkeeping that scales with total task count. ' +

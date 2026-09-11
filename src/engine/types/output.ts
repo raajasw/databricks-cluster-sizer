@@ -143,7 +143,12 @@ export interface SizingResult {
   parallelism: ParallelismSpec;
   memory: {
     inflation: InflationBreakdown;
+    /** Total in-memory bytes the job processes over its whole run. */
     inflatedScannedBytes: Range;
+    /**
+     * Peak bytes resident at any instant: concurrent tasks x partition size.
+     * This -- not the total -- is what the cluster's RAM must satisfy.
+     */
     workingSetBytes: Range;
     cacheDemandBytes: Range;
     totalClusterMemory: Bytes;

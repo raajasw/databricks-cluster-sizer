@@ -129,11 +129,12 @@ export const inflation: NamedStage = {
 
     // Independent factors: combined in quadrature rather than by multiplying
     // extremes, which would compound four simultaneous worst cases.
-    const total = mulIndependent(
-      decodeFactor,
-      representationFactor,
-      queryAmplification,
-    );
+    // Query amplification is deliberately NOT part of the volume factor.
+    // Sort buffers, hash maps and join build sides multiply the memory a task
+    // needs at its peak; they do not change how many bytes the job reads.
+    // Folding them into the total is how a 12 GiB input ends up claiming to
+    // need 193 GiB of memory.
+    const total = mulIndependent(decodeFactor, representationFactor);
 
     const breakdown: InflationBreakdown = {
       codecFactor: columnar ? point(1) : decodeFactor,
@@ -153,8 +154,9 @@ export const inflation: NamedStage = {
       title: 'In-memory inflation',
       formula:
         `${decodeLabel} ${fmtX(decodeFactor)} x representation ${fmtX(representationFactor)} ` +
-        `x query ${fmtX(queryAmplification)} = ${fmtX(total)}  ->  ` +
-        `${fmtBytes(scanned)} becomes ${fmtRange(inflated, 'bytes')}`,
+        `= ${fmtX(total)}  ->  ${fmtBytes(scanned)} becomes ${fmtRange(inflated, 'bytes')}\n` +
+        `(query amplification ${fmtX(queryAmplification)} applies to peak memory per task, ` +
+        'not to total volume)',
       inputs: {
         scannedBytesOnDisk: scanned,
         codec: data.codec,
@@ -175,8 +177,10 @@ export const inflation: NamedStage = {
             'string columns drive this highest -- a handful of dictionary entries on disk ' +
             'becomes one string object per row in memory.'
           : 'This is a row-oriented format, so decompression is the whole story at the scan.') +
-        ' Representation covers how rows are held once decoded, and query amplification ' +
-        'covers the sort buffers, hash maps and join build sides live at peak. ' +
+        ' Representation covers how rows are held once decoded. Query amplification -- the ' +
+        'sort buffers, hash maps and join build sides live at peak -- is tracked separately ' +
+        'and applied to per-task memory, because those structures multiply what one task ' +
+        'needs at an instant without changing how many bytes the job reads. ' +
         'The factors are combined in quadrature rather than multiplied end to end: they are ' +
         'largely independent, and compounding every worst case at once produces a range too ' +
         'wide to act on.',
@@ -198,6 +202,7 @@ export const inflation: NamedStage = {
     return withScratch(withStep(ctx, step), {
       [INFLATION]: breakdown,
       [INFLATED_BYTES]: inflated,
+      queryAmplification,
     });
   },
 };

@@ -3,8 +3,13 @@ import type { PlatformAdapter } from '../types/platform';
 import type { ProfileStrategy } from '../types/profile';
 import { sanityRules } from './core/sanity';
 import { memoryRules } from './core/memory';
+import { capacityRules } from './core/capacity';
 
-export const coreRules = (): Rule[] => [...sanityRules(), ...memoryRules()];
+export const coreRules = (): Rule[] => [
+  ...capacityRules(),
+  ...sanityRules(),
+  ...memoryRules(),
+];
 
 export const allRules = (adapter: PlatformAdapter, profile: ProfileStrategy): Rule[] => [
   ...coreRules(),

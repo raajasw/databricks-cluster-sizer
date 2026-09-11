@@ -57,6 +57,9 @@ export const executorMemory: NamedStage = {
       throw new Error('executorMemory requires allocatable, executorsPerNode, coresPerExecutor');
     }
 
+    // Local mode runs one JVM that is both driver and executor, so the whole
+    // allocatable budget belongs to it. Splitting it would report two heaps
+    // for a process that only has one.
     const budget = bytes(Math.floor(allocatable.memory / executorsPerNode));
 
     const nonJvm = isNonJvm(ctx.input.runtimeLanguage);

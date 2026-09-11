@@ -223,3 +223,6 @@ dist/
 .vite/
 *.local
 .DS_Store
+shot*.mjs
+shot-*.png
+probe*.mjs
