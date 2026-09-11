@@ -125,3 +125,45 @@ export const spread = (r: Range): number => (r.mid === 0 ? 0 : (r.high - r.low) 
 
 export const isFinitePositive = (r: Range): boolean =>
   [r.low, r.mid, r.high].every((n) => Number.isFinite(n) && n >= 0);
+
+/**
+ * Multiply several independent factors without compounding their extremes.
+ *
+ * Plain interval arithmetic assumes perfect correlation: the `high` of a
+ * four-factor product is worst-codec x worst-encoding x worst-representation x
+ * worst-amplification, all at once. For genuinely independent factors that
+ * combination is vanishingly unlikely, and the resulting interval is so wide it
+ * stops being useful -- 2 GB of Parquet "inflating to between 11 GB and 140 GB"
+ * tells a user nothing.
+ *
+ * Instead: compound the midpoints exactly, then widen by the ROOT of the summed
+ * squared log-deviations. That is the standard quadrature combination for
+ * independent multiplicative errors, and it keeps the interval honest without
+ * letting it explode with chain length. For a single factor it is identical to
+ * plain multiplication.
+ */
+export function mulIndependent(...rs: Range[]): Range {
+  if (rs.length === 0) return point(1);
+  if (rs.length === 1) return rs[0]!;
+
+  let mid = 1;
+  let sumSqLow = 0;
+  let sumSqHigh = 0;
+
+  for (const r of rs) {
+    mid *= r.mid;
+    if (r.mid > 0) {
+      // Work in log space so the spread is relative, not absolute.
+      const lowDev = Math.log(r.mid / Math.max(r.low, 1e-9));
+      const highDev = Math.log(Math.max(r.high, 1e-9) / r.mid);
+      sumSqLow += lowDev * lowDev;
+      sumSqHigh += highDev * highDev;
+    }
+  }
+
+  return {
+    low: mid / Math.exp(Math.sqrt(sumSqLow)),
+    mid,
+    high: mid * Math.exp(Math.sqrt(sumSqHigh)),
+  };
+}

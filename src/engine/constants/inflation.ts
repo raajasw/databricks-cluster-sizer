@@ -22,7 +22,12 @@
 import { fromBounds, point, type Range } from '../range';
 import type { Codec, StorageFormat, RuntimeLanguage, QueryShape } from '../types/input';
 
-/** Factor 1: block-compression ratio. Highly data-dependent. */
+/**
+ * Factor 1: block-compression ratio, for ROW-oriented formats only.
+ *
+ * For columnar formats this is NOT used on its own -- see COLUMNAR_DECODE_FACTOR
+ * below for why multiplying codec x encoding double-counts.
+ */
 export const CODEC_FACTOR: Record<Codec, Range> = {
   none: point(1),
   lz4: fromBounds(1.8, 3.5),
@@ -41,6 +46,33 @@ export const CODEC_FACTOR: Record<Codec, Range> = {
  * High-cardinality strings barely compressed in the first place, so undoing it
  * costs little.
  */
+/**
+ * Combined disk-to-memory decode factor for COLUMNAR formats.
+ *
+ * A Parquet file's snappy ratio is measured on data that is ALREADY dictionary-
+ * and RLE-encoded. Multiplying a codec factor by an encoding factor therefore
+ * counts the same dictionary savings twice: it is the single easiest way to
+ * produce a wildly overestimated memory requirement, and it is why a naive
+ * model reports 2 GB of Parquet inflating to 40 GB.
+ *
+ * What the combined factor actually captures is the ratio between compressed
+ * on-disk bytes and Spark's in-memory UnsafeRow representation. Empirically
+ * that lands around 3-8x for typical Parquet, skewed higher when
+ * low-cardinality string columns dominate the row (their dictionary collapses
+ * hard on disk and expands to one UTF8String per row in memory) and lower for
+ * numeric-heavy data where on-disk bit-packing is already close to the
+ * in-memory width.
+ */
+export const COLUMNAR_DECODE_FACTOR_BY_COLUMN_CLASS = {
+  numeric: fromBounds(2.0, 4.0),
+  lowCardString: fromBounds(6.0, 18.0),
+  highCardString: fromBounds(2.5, 5.0),
+  nested: fromBounds(4.0, 9.0),
+} as const;
+
+/** Used when the column mix is unknown. Wide on purpose. */
+export const COLUMNAR_DECODE_FACTOR_UNKNOWN: Range = fromBounds(3.0, 8.0);
+
 export const ENCODING_FACTOR_BY_COLUMN_CLASS = {
   numeric: fromBounds(1.1, 1.5),
   lowCardString: fromBounds(4.0, 20.0),

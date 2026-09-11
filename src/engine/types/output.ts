@@ -168,7 +168,14 @@ export interface InflationBreakdown {
   tighteningHint?: string;
 }
 
-export type VerdictLevel = 'dont-use-spark' | 'ok' | 'risky' | 'will-fail';
+export type VerdictLevel =
+  /** Working set clearly fits one machine; a single-process engine wins outright. */
+  | 'dont-use-spark'
+  /** Borderline: it would fit, but not so clearly that Spark is wrong. */
+  | 'reconsider-spark'
+  | 'ok'
+  | 'risky'
+  | 'will-fail';
 
 export interface Verdict {
   level: VerdictLevel;
