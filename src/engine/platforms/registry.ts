@@ -1,9 +1,11 @@
 import type { PlatformId } from '../types/input';
 import type { PlatformAdapter } from '../types/platform';
 import { localAdapter } from './local/adapter';
+import { kubernetesAdapter } from './kubernetes/adapter';
 
 const ADAPTERS: Partial<Record<PlatformId, PlatformAdapter>> = {
   local: localAdapter,
+  kubernetes: kubernetesAdapter,
 };
 
 export function getAdapter(id: PlatformId): PlatformAdapter {

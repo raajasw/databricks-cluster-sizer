@@ -5,7 +5,7 @@
  * number in the output. Anything that does not is a question not worth asking.
  */
 
-import { bytes, cores, type Bytes } from '../../engine/units';
+import { bytes, cores, seconds, type Bytes } from '../../engine/units';
 import { formatBytes, parseSize } from '../format';
 import { PRESETS } from '../state/defaults';
 import type {
@@ -24,6 +24,14 @@ export function Questionnaire({ input, onChange }: Props) {
     onChange({ ...input, data: { ...input.data, ...patch } });
   const setPipeline = (patch: Partial<WorkloadInput['pipeline']>) =>
     onChange({ ...input, pipeline: { ...input.pipeline, ...patch } });
+  const setK8s = (patch: Partial<NonNullable<WorkloadInput['platformInput']['kubernetes']>>) =>
+    onChange({
+      ...input,
+      platformInput: {
+        ...input.platformInput,
+        kubernetes: { ...input.platformInput.kubernetes!, ...patch },
+      },
+    });
   const setLocal = (patch: Partial<NonNullable<WorkloadInput['platformInput']['local']>>) =>
     onChange({
       ...input,
@@ -48,6 +56,43 @@ export function Questionnaire({ input, onChange }: Props) {
             <span>{p.description}</span>
           </button>
         ))}
+      </div>
+
+      <h3>Where it runs</h3>
+      <div className="field">
+        <label>Platform</label>
+        <select value={input.platformInput.platform}
+                onChange={(e) => {
+                  const platform = e.target.value as 'local' | 'kubernetes';
+                  onChange({
+                    ...input,
+                    platformInput: platform === 'kubernetes'
+                      ? {
+                          platform,
+                          kubernetes: input.platformInput.kubernetes ?? {
+                            reservePreset: 'gke',
+                            dynamicAllocation: false,
+                            shuffleTrackingEnabled: false,
+                            shuffleStorage: 'emptydir',
+                            setCpuLimit: false,
+                          },
+                        }
+                      : {
+                          platform,
+                          local: input.platformInput.local ?? {
+                            machineCores: cores(10),
+                            machineMemory: bytes(32 * 1024 ** 3) as Bytes,
+                          },
+                        },
+                  });
+                }}>
+          <option value="kubernetes">Kubernetes (sizes a cluster)</option>
+          <option value="local">Local / single machine</option>
+        </select>
+        <div className="hint">
+          Kubernetes recommends node type and count from your data size. Local mode
+          checks whether one machine can cope.
+        </div>
       </div>
 
       <h3>Workload</h3>
@@ -137,6 +182,24 @@ export function Questionnaire({ input, onChange }: Props) {
         </div>
       </div>
 
+      <div className="field">
+        <label>Target runtime</label>
+        <select
+          value={input.sla.targetRuntime ?? 3600}
+          onChange={(e) => set({
+            sla: { kind: 'deadline', targetRuntime: seconds(Number(e.target.value)) },
+          })}>
+          <option value={600}>10 minutes</option>
+          <option value={1800}>30 minutes</option>
+          <option value={3600}>1 hour</option>
+          <option value={7200}>2 hours</option>
+          <option value={21600}>6 hours</option>
+        </select>
+        <div className="hint">
+          The main lever on cluster size: a shorter target buys more nodes.
+        </div>
+      </div>
+
       <h3>Shape of the work</h3>
       <div className="field">
         <label>Dominant operation</label>
@@ -168,7 +231,7 @@ export function Questionnaire({ input, onChange }: Props) {
                })} />
       </div>
 
-      <h3>Machine</h3>
+      {input.platformInput.platform === 'local' && <><h3>Machine</h3>
       <div className="row">
         <div className="field">
           <label>Cores</label>
@@ -188,9 +251,51 @@ export function Questionnaire({ input, onChange }: Props) {
           />
         </div>
       </div>
-      <div className="hint" style={{ marginTop: -8, marginBottom: 14 }}>
-        Only local mode is implemented so far. Databricks and Kubernetes are next.
-      </div>
+      </>}
+
+      {input.platformInput.platform === 'kubernetes' && (
+        <>
+          <h3>Cluster</h3>
+          <div className="field">
+            <label>DaemonSet overhead per node</label>
+            <select
+              value={String(input.platformInput.kubernetes?.daemonsetMemory ?? 1073741824)}
+              onChange={(e) => setK8s({ daemonsetMemory: bytes(Number(e.target.value)) as Bytes })}>
+              <option value={536870912}>Light (512 MiB) — CNI only</option>
+              <option value={1073741824}>Typical (1 GiB) — CNI + logging</option>
+              <option value={3221225472}>Heavy (3 GiB) — + service mesh</option>
+            </select>
+            <div className="hint">Taken off every node before Spark sees it.</div>
+          </div>
+          <div className="field">
+            <label>Shuffle storage</label>
+            <select value={input.platformInput.kubernetes?.shuffleStorage ?? 'emptydir'}
+                    onChange={(e) => setK8s({
+                      shuffleStorage: e.target.value as 'emptydir' | 'pvc' | 'tmpfs',
+                    })}>
+              <option value="emptydir">emptyDir (node disk)</option>
+              <option value="pvc">PVC</option>
+              <option value="tmpfs">tmpfs (RAM)</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>
+              <input type="checkbox" style={{ width: 'auto', marginRight: 6 }}
+                     checked={input.platformInput.kubernetes?.dynamicAllocation ?? false}
+                     onChange={(e) => setK8s({ dynamicAllocation: e.target.checked })} />
+              Dynamic allocation
+            </label>
+          </div>
+          <div className="field">
+            <label>
+              <input type="checkbox" style={{ width: 'auto', marginRight: 6 }}
+                     checked={input.platformInput.kubernetes?.setCpuLimit ?? false}
+                     onChange={(e) => setK8s({ setCpuLimit: e.target.checked })} />
+              Set a CPU limit on executor pods
+            </label>
+          </div>
+        </>
+      )}
 
       <div className="field">
         <label>

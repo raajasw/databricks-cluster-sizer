@@ -6,8 +6,8 @@
  * the worst failure mode this tool has.
  */
 
-import { fmtBytes } from '../../pipeline/trace';
-import { WAVES_WARN_ABOVE } from '../../constants/heuristics';
+import { fmtBytes, fmtSeconds } from '../../pipeline/trace';
+
 import type { Rule } from '../../types/rules';
 
 /**
@@ -24,7 +24,6 @@ const exceedsSingleMachine: Rule = {
   supersedes: [
     'shuffle-partitions-default-200',
     'spill-predicted',
-    'too-many-waves',
     'local-tmp-disk-for-shuffle',
     'data-too-small-for-spark',
   ],
@@ -40,11 +39,10 @@ const exceedsSingleMachine: Rule = {
     const total = ctx.result.memory.inflatedScannedBytes.mid;
     const ratio = total / machine;
     const spill = ctx.result.storage.spillPressureRatio.mid;
-    const waves = ctx.result.parallelism.wavesPerStage.mid;
-    if (spill < 4 && waves < 200) return null;
+    if (spill < 4) return null;
 
     return {
-      severity: spill > 20 || waves > 800 ? 'blocker' : 'critical',
+      severity: spill > 20 ? 'blocker' : 'critical',
       title: 'One machine is too small for this much data',
       message:
         `${fmtBytes(total)} has to stream through ${ctx.result.parallelism.totalTaskSlots} ` +
@@ -53,7 +51,7 @@ const exceedsSingleMachine: Rule = {
         'the problem. The problem is that a single machine cannot add capacity, so each task ' +
         `ends up needing roughly ${spill.toFixed(0)}x more memory than its slot provides -- ` +
         'every stage will spill heavily to disk. ' +
-        (spill > 20 || waves > 800
+        (spill > 20
           ? 'At this ratio the run would take many hours at best. This needs a real cluster, ' +
             'or far less data per run.'
           : 'Expect a slow run. Consider a cluster, or processing one period at a time.'),
@@ -77,37 +75,81 @@ const exceedsSingleMachine: Rule = {
  * Too many waves means the cluster is far too small for the work, regardless of
  * whether any single task fits in memory.
  */
-const farTooManyWaves: Rule = {
-  id: 'too-many-waves',
+/**
+ * A high wave count is normal on large data -- partitions are sized to fit a
+ * task slot, so a big dataset has many of them. What matters is whether the
+ * cluster is too small to finish in a sensible time, and whether there is
+ * enough parallelism to absorb a straggler.
+ */
+const tooFewWavesToHideStragglers: Rule = {
+  id: 'too-few-waves',
   category: 'parallelism',
   defaultSeverity: 'warning',
   evaluate(ctx) {
     const waves = ctx.result.parallelism.wavesPerStage.mid;
-    if (waves <= WAVES_WARN_ABOVE) return null;
-
-    const severe = waves > 100;
+    if (waves >= 2 || ctx.result.parallelism.shufflePartitions <= 1) return null;
     return {
-      severity: severe ? 'critical' : 'warning',
-      title: `Every stage runs in about ${Math.round(waves).toLocaleString()} waves`,
+      severity: 'warning',
+      title: 'Not enough parallelism to absorb a slow task',
       message:
-        `${ctx.result.parallelism.shufflePartitions.toLocaleString()} partitions across only ` +
-        `${ctx.result.parallelism.totalTaskSlots} task slots means each stage runs in roughly ` +
-        `${Math.round(waves).toLocaleString()} sequential waves. ` +
-        (severe
-          ? 'At that ratio the cluster is drastically undersized for the data: wall-clock time ' +
-            'scales with the wave count, so this will be slow in a way no tuning fixes. Add ' +
-            'capacity or reduce the data per run.'
-          : `Two to four waves is the useful range -- enough to hide stragglers, not so many ` +
-            'that task-launch overhead accumulates.'),
+        `${ctx.result.parallelism.shufflePartitions} partitions across ` +
+        `${ctx.result.parallelism.totalTaskSlots} task slots is under one full wave, so every ` +
+        'task runs concurrently and the stage takes as long as its slowest task. With at ' +
+        'least two waves the scheduler can start a new task as soon as a slot frees, which ' +
+        'hides variation between tasks. Either use fewer, larger executors, or split the ' +
+        'input into more partitions.',
       evidence: [
-        { label: 'Partitions', value: ctx.result.parallelism.shufflePartitions.toLocaleString() },
+        { label: 'Partitions', value: `${ctx.result.parallelism.shufflePartitions}` },
         { label: 'Task slots', value: `${ctx.result.parallelism.totalTaskSlots}` },
-        { label: 'Waves', value: Math.round(waves).toLocaleString(), stepId: 'shuffle-partitions' },
+        { label: 'Waves', value: waves.toFixed(1), stepId: 'shuffle-partitions' },
       ],
       confidence: 'estimated',
-      impact: severe ? 95 : 55,
+      impact: 45,
     };
   },
 };
 
-export const capacityRules = (): Rule[] => [exceedsSingleMachine, farTooManyWaves];
+/**
+ * The honest version of "your cluster is too small": not a wave count, but a
+ * runtime that misses the target the user actually asked for.
+ */
+const missesRuntimeTarget: Rule = {
+  id: 'misses-runtime-target',
+  category: 'sanity',
+  defaultSeverity: 'warning',
+  evaluate(ctx) {
+    const target = ctx.input.sla.targetRuntime;
+    if (!target) return null;
+    const estimated = ctx.result.runtime?.seconds.mid;
+    if (!estimated) return null;
+    const overshoot = estimated / target;
+    if (overshoot <= 1.5) return null;
+
+    return {
+      severity: overshoot > 4 ? 'critical' : 'warning',
+      title: 'This cluster will likely miss your runtime target',
+      message:
+        `You asked for about ${fmtSeconds(target)}, but this configuration is estimated at ` +
+        `${fmtSeconds(estimated)} -- roughly ${overshoot.toFixed(1)}x over. ` +
+        (ctx.result.parallelism.totalCores >= ctx.result.parallelism.shufflePartitions
+          ? 'The cluster already has a core per partition, so adding nodes will not help: ' +
+            'the work needs to be split into more partitions first, or the target relaxed.'
+          : 'Adding cores would shorten it roughly proportionally, if the budget allows.') +
+        ' Throughput per core is the least reliable figure in this model, so treat the ' +
+        'estimate as an order of magnitude rather than a promise.',
+      evidence: [
+        { label: 'Target', value: fmtSeconds(target) },
+        { label: 'Estimated', value: fmtSeconds(estimated), stepId: 'node-count' },
+        { label: 'Cores', value: `${ctx.result.parallelism.totalCores}` },
+      ],
+      confidence: 'guess',
+      impact: 70,
+    };
+  },
+};
+
+export const capacityRules = (): Rule[] => [
+  exceedsSingleMachine,
+  tooFewWavesToHideStragglers,
+  missesRuntimeTarget,
+];

@@ -188,3 +188,13 @@ export const BIN_PACK_WASTE_WARN_FRACTION = 0.2;
 
 /** Node provisioning plus image pull, which dominates dynamic-allocation latency. */
 export const K8S_POD_STARTUP_SECONDS = fromBounds(30, 120);
+
+/**
+ * Assumed batch window when the user gives no SLA.
+ *
+ * Cluster size is fundamentally a time decision, so something has to stand in
+ * for "how long is acceptable". An hour is a common batch cadence and keeps the
+ * recommendation in a sane range; the UI says plainly that this is the
+ * assumption and that changing the target resizes the cluster.
+ */
+export const DEFAULT_BATCH_WINDOW_SECONDS = 3600;

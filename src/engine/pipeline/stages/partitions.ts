@@ -68,16 +68,34 @@ export const partitioning: NamedStage = {
     }
 
     // Shuffle partitions: with AQE on, a static count is the wrong knob.
-    // Partition size is a TARGET, not a constraint. When the cluster is fixed
-    // (local mode, or a pinned budget), honouring the target blindly produces
-    // thousands of waves. The wave band is the real objective, so where the two
-    // conflict, grow the partitions and record that we did.
+    /*
+     * Partition count is governed by what fits in a TASK SLOT, not by a wave
+     * target.
+     *
+     * A partition has to be processed by one task, in that task's share of
+     * execution memory. Capping the partition count to hold waves down just
+     * makes each partition bigger than a slot can hold, which trades a high
+     * wave count for guaranteed spill -- strictly worse, since spill costs
+     * 2-10x while extra waves cost only scheduling overhead.
+     *
+     * So size partitions to fit, and let the wave count be whatever it is. A
+     * high wave count is then a true signal that the cluster is small for the
+     * work, which the rules report honestly rather than hiding.
+     */
     const targetShuffleBytes = ctx.tunables.targetShufflePartitionBytes;
-    const idealCount = Math.max(1, Math.ceil(sizingValue(inflated) / targetShuffleBytes));
+    const amplificationForFit =
+      (ctx.draft.scratch['queryAmplification'] as Range | undefined)?.mid ?? 1;
 
-    const maxByWaves = Math.max(1, totalTaskSlots * ctx.tunables.targetWavesMax);
-    const computed = Math.min(idealCount, maxByWaves);
-    const partitionsCapped = computed < idealCount;
+    // Leave headroom: a task needs room for its partition AND the operator
+    // structures built on top of it.
+    const fitsInSlot = Math.max(
+      mib(16),
+      (perTask * 0.7) / amplificationForFit,
+    );
+    const effectiveTarget = Math.min(targetShuffleBytes, fitsInSlot);
+
+    const computed = Math.max(1, Math.ceil(sizingValue(inflated) / effectiveTarget));
+    const partitionsCapped = effectiveTarget < targetShuffleBytes;
     const effectivePartitionBytes = sizingValue(inflated) / computed;
 
     let shufflePartitions: number;
@@ -106,13 +124,10 @@ export const partitioning: NamedStage = {
     if (pinned) shufflePartitions = pinned;
 
     const cappedNote = partitionsCapped
-      ? ` The ${fmtBytes(targetShuffleBytes)} partition target would need ` +
-        `${idealCount.toLocaleString()} partitions and ` +
-        `${Math.round(idealCount / totalTaskSlots).toLocaleString()} waves on this cluster, so ` +
-        `it is capped at ${ctx.tunables.targetWavesMax} waves and each partition carries about ` +
-        `${fmtBytes(effectivePartitionBytes)} instead. Larger partitions mean more memory per ` +
-        'task, which is the tradeoff for not running thousands of sequential waves -- if that ' +
-        'does not fit, the cluster is genuinely too small rather than mis-tuned.'
+      ? ` Partitions are sized at ${fmtBytes(effectiveTarget)} rather than the usual ` +
+        `${fmtBytes(targetShuffleBytes)}, because that is what fits in one task slot's ` +
+        `${fmtBytes(perTask)} of execution memory once query amplification is allowed for. ` +
+        'Bigger partitions would spill, and spill costs far more than the extra waves.'
       : '';
 
     const advisoryBytes = ctx.tunables.advisoryPartitionBytes;

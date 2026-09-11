@@ -96,6 +96,8 @@ export function computeRecommendation(
   const working = (ctx.draft.scratch[WORKING_SET] as Range) ?? point(0);
   const cacheDemand = (ctx.draft.scratch[CACHE_DEMAND] as Range) ?? point(0);
 
+  const runtimeRange = ctx.draft.scratch['estimatedRuntime'] as Range | undefined;
+
   const result: SizingResult = {
     input,
     platform: adapter.id,
@@ -122,6 +124,16 @@ export function computeRecommendation(
       totalClusterMemory: bytes(executorCount * (ctx.draft.containerTotalBytes ?? 0)),
     },
     storage,
+    runtime: runtimeRange
+      ? {
+          seconds: runtimeRange,
+          confidence: 'guess',
+          disclaimer:
+            'Throughput per core varies with the query, the data, the storage backend and the ' +
+            'JVM. Treat this as an order of magnitude, not a promise -- one real run tells you ' +
+            'more than any estimate here.',
+        }
+      : undefined,
     utilization: utilization ?? {
       cpuPackingEfficiency: 1, memPackingEfficiency: 1,
       strandedCpuPerNode: cores(0), strandedMemoryPerNode: bytes(0),

@@ -215,3 +215,31 @@ pre.cmd {
   .sidebar { width: 100%; flex: none; position: static; max-height: none; border-right: none;
              border-bottom: 1px solid var(--border); }
 }
+
+/* Recommended cluster: the headline answer */
+.cluster-rec { border-left: 3px solid var(--accent); }
+.cluster-headline {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px;
+}
+.cluster-count {
+  font-size: 38px; font-weight: 700; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums; line-height: 1;
+}
+.cluster-times { font-size: 20px; color: var(--text-faint); }
+.cluster-node {
+  font-size: 24px; font-weight: 600; font-family: var(--mono);
+  color: var(--accent); letter-spacing: -0.02em;
+}
+.cluster-sub { font-size: 12.5px; color: var(--text-dim); margin-bottom: 8px; }
+.cluster-detail {
+  font-size: 12.5px; color: var(--text-dim); padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.cluster-runtime {
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  font-size: 12.5px; color: var(--text-dim);
+}
+.cluster-runtime strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.runtime-range { color: var(--text-faint); }
+.runtime-caveat { font-size: 11.5px; color: var(--text-faint); margin-top: 5px; }

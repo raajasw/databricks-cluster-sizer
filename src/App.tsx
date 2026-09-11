@@ -6,7 +6,7 @@ import { MemoryBar } from './ui/components/MemoryBar';
 import { DerivationLadder } from './ui/components/DerivationLadder';
 import { FindingsPanel } from './ui/components/FindingsPanel';
 import { ConfigOutput } from './ui/components/ConfigOutput';
-import { formatBytes, formatRange, formatNumber } from './ui/format';
+import { formatBytes, formatRange, formatNumber, formatSeconds } from './ui/format';
 import type { WorkloadInput } from './engine/types/input';
 import './ui/styles.css';
 
@@ -42,6 +42,40 @@ export default function App() {
 
         {!failed && (
           <>
+            {r.nodeType && r.platform !== 'local' && (
+              <div className="panel cluster-rec">
+                <h2>Recommended cluster</h2>
+                <div className="cluster-headline">
+                  <span className="cluster-count">{r.nodeCount}</span>
+                  <span className="cluster-times">×</span>
+                  <span className="cluster-node">{r.nodeType.displayName}</span>
+                </div>
+                <div className="cluster-sub">
+                  {r.nodeType.vcpus} vCPU · {formatBytes(r.nodeType.memoryBytes)} ·{' '}
+                  {r.nodeType.family.replace(/-/g, ' ')}
+                  {r.nodeType.localSsdBytes ? ' · local NVMe' : ''}
+                </div>
+                <div className="cluster-detail">
+                  {r.executor.count} executors ({Math.round(r.executor.count / r.nodeCount)} per
+                  node) · {r.parallelism.totalCores} cores total ·{' '}
+                  {formatBytes(r.executor.heapBytes)} heap each
+                </div>
+                {r.runtime && (
+                  <div className="cluster-runtime">
+                    Estimated runtime <strong>{formatSeconds(r.runtime.seconds.mid)}</strong>{' '}
+                    <span className="runtime-range">
+                      (could be {formatSeconds(r.runtime.seconds.low)} to{' '}
+                      {formatSeconds(r.runtime.seconds.high)})
+                    </span>
+                    {input.sla.targetRuntime && (
+                      <> against your {formatSeconds(input.sla.targetRuntime)} target</>
+                    )}
+                    <div className="runtime-caveat">{r.runtime.disclaimer}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="panel">
               <h2>The shape of it</h2>
               <div className="stat-grid">
