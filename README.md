@@ -1,4 +1,4 @@
-# Databricks worker sizer
+# Databricks cluster sizer
 
 Six questions in, one answer out: how many workers of what type, and roughly
 how long the job will take.

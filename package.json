@@ -1,9 +1,9 @@
 {
-  "name": "spark-node-plan",
+  "name": "databricks-cluster-sizer",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "An opinionated Spark cluster sizing advisor",
+  "description": "Size a Databricks cluster from six questions",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
