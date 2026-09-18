@@ -46,13 +46,20 @@ describe('the levers actually move the answer', () => {
 });
 
 describe('node selection', () => {
-  it('picks memory-optimized for joins and sorts', () => {
-    expect(size(ask({ operation: 'join' })).node.shape).toBe('memory');
-    expect(size(ask({ operation: 'sort' })).node.shape).toBe('memory');
+  it('picks storage-optimized for shuffling work, per Databricks guidance', () => {
+    // Shuffle is disk- and network-bound before it is memory-bound.
+    for (const operation of ['join', 'sort', 'aggregate'] as const) {
+      expect(size(ask({ cloud: 'aws', operation })).node.shape).toBe('storage');
+    }
   });
 
-  it('does not pick memory-optimized for a plain scan', () => {
-    expect(size(ask({ operation: 'scan' })).node.shape).not.toBe('memory');
+  it('falls back to memory-optimized where a cloud has no storage tier', () => {
+    // GCP's catalogue here has no storage-optimised entries.
+    expect(size(ask({ cloud: 'gcp', operation: 'join' })).node.shape).toBe('memory');
+  });
+
+  it('picks balanced for a plain scan', () => {
+    expect(size(ask({ operation: 'scan' })).node.shape).toBe('balanced');
   });
 
   it('only ever recommends a node from the chosen cloud', () => {
@@ -119,15 +126,33 @@ describe('the answer is always usable', () => {
     expect(hi).toBeGreaterThan(r.estimatedMinutes);
   });
 
-  it('lands in the right ballpark against a known reference point', () => {
-    // ~100 cores aggregating 1 TB of Parquet in 10-20 minutes is a commonly
-    // cited shape. If this drifts far from that, the constants are wrong.
+  it('matches the audited TPC-DS benchmark within an order of magnitude', () => {
+    /*
+     * The anchor for every throughput constant in this tool.
+     *
+     * The TPC-DS 100 TB Full Disclosure Report (Databricks SQL 8.3, audited by
+     * the TPC council, Nov 2021) loaded 100 TB on 256 x i3.2xlarge - 2,048
+     * vCPU - in 7,929 seconds, which is 6.2 MB per core-second WITH Photon.
+     *
+     * Asking this tool to move 100 TB in that time should therefore land in
+     * the same neighbourhood as 2,048 cores. It should ask for MORE, because
+     * the tool models the JVM engine rather than Photon (the Photon paper puts
+     * that gap at ~4x on average) and because a bulk load is lighter than a
+     * shuffling query.
+     *
+     * If a change to the constants breaks this, re-derive it from the source
+     * rather than widening the bounds to fit.
+     */
+    const auditedCores = 2048;
+    const auditedMinutes = 7929 / 60;
+
     const r = size(ask({
-      dataBytes: 1 * TB, format: 'parquet', language: 'sql',
-      operation: 'aggregate', targetMinutes: 15,
+      dataBytes: 100 * TB, format: 'parquet', language: 'sql',
+      operation: 'scan', targetMinutes: auditedMinutes,
     }));
-    expect(r.totalCores).toBeGreaterThan(50);
-    expect(r.totalCores).toBeLessThan(250);
+
+    expect(r.totalCores).toBeGreaterThan(auditedCores);
+    expect(r.totalCores).toBeLessThan(auditedCores * 10);
   });
 });
 

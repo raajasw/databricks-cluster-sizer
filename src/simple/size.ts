@@ -65,24 +65,38 @@ const EXPANSION: Record<Format, number> = {
  * double-counting. Reading 1 GB of Parquet and 1 GB of CSV are different jobs,
  * but the difference belongs in the format multiplier below, not in both.
  *
- * Anchored on a common reference point: a roughly 100-core cluster aggregating
- * 1 TB of Parquet in 10-20 minutes works out to 11-17 MB of source bytes per
- * core-second. With the aggregate multiplier below, the 40 here lands in that
- * range. A pure scan is faster, which the operation multiplier handles.
+ * CALIBRATION - see README for the full working.
  *
- * This is the softest number in the tool by a wide margin - real throughput
- * depends on the query, the data, the file layout and the runtime. Treat the
- * runtime estimate as a rough order of magnitude, not a promise.
+ * The audited TPC-DS 100 TB Full Disclosure Report (Databricks SQL 8.3, TPC
+ * council, Nov 2021) loaded 100 TB on 256 x i3.2xlarge (2,048 vCPU) in 7,929
+ * seconds. That is 6.2 MB per core-second, on world-record hardware running
+ * Photon.
+ *
+ * The Photon paper (SIGMOD 2022) measures Photon at an average 4x faster than
+ * DBR, the JVM Spark engine. Without Photon - and any Python or Scala UDF
+ * forces the JVM path regardless - comparable work runs nearer 1.5 MB per
+ * core-second.
+ *
+ * These base rates sit in that range, deliberately toward the pessimistic end.
+ * Under-provisioning surfaces as an out-of-memory failure three hours into a
+ * production run; over-provisioning costs some money. Those are not symmetric,
+ * so the bias is intentional.
+ *
+ * An earlier version of this file used 40 here, calibrated against a
+ * half-remembered figure rather than a published one. That was roughly 6-25x
+ * too fast and produced clusters that would have missed their targets badly.
  *
  * The Python UDF figure is low for a real reason: every row is serialised out
  * of the JVM, sent to a Python process and sent back. That round trip dominates
- * everything else the job does.
+ * everything else the job does. Published benchmarks put row-at-a-time UDFs at
+ * 10-20x slower than native functions; the ratio here is at the conservative
+ * end of that range.
  */
 const MB_PER_CORE_SECOND: Record<Language, number> = {
-  sql: 40,
-  scala: 40,
-  'python-sql': 35,
-  'python-udf': 5,
+  sql: 6,
+  scala: 6,
+  'python-sql': 5.5,
+  'python-udf': 0.7,
 };
 
 /**
@@ -158,25 +172,35 @@ export interface Recommendation {
   config: Array<{ key: string; value: string; note: string }>;
 }
 
+/**
+ * Which node shape suits the work.
+ *
+ * Follows Databricks' own guidance: for anything that shuffles - joins, sorts,
+ * aggregations - they recommend storage-optimised nodes with local disk and
+ * disk caching enabled. Shuffle is disk- and network-bound more than it is
+ * memory-bound, because every shuffled row is written to local disk, sent
+ * across the network and read back on the other side.
+ *
+ * Memory-optimised is the fallback for shuffle-heavy work on clouds with no
+ * storage tier in the catalogue, since a join still needs room for its build
+ * side.
+ */
 function pickShape(a: Answers, available: NodeShape[]): { shape: NodeShape; reason: string } {
   const has = (s: NodeShape) => available.includes(s);
+  const shuffles = a.operation !== 'scan';
 
-  if (GB_PER_CORE[a.operation] >= 6 && has('memory')) {
-    return {
-      shape: 'memory',
-      reason: `a ${a.operation} holds a lot in memory at once, so it wants more RAM per core`,
-    };
-  }
-  if (a.operation === 'aggregate' && has('storage')) {
+  if (shuffles && has('storage')) {
     return {
       shape: 'storage',
-      reason: 'aggregations shuffle, and shuffle writes land on local disk',
+      reason: `a ${a.operation} shuffles, and shuffle traffic goes to local disk before it ` +
+        'goes anywhere else',
     };
   }
-  if (a.operation === 'aggregate' && has('balanced')) {
+  if (shuffles && has('memory')) {
     return {
-      shape: 'balanced',
-      reason: 'an aggregation shuffles but does not need extra memory per core',
+      shape: 'memory',
+      reason: `a ${a.operation} shuffles and holds a lot at once; this cloud has no ` +
+        'storage-optimised tier here, so more RAM per core is the next best thing',
     };
   }
   if (has('balanced')) {
