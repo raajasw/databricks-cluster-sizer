@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { size, type Answers } from './size';
+import { size, pickShape, type Answers } from './size';
+import { nodesFor } from './nodes';
 
 const GB = 1e9;
 const TB = 1e12;
@@ -54,8 +55,17 @@ describe('node selection', () => {
   });
 
   it('falls back to memory-optimized where a cloud has no storage tier', () => {
-    // GCP's catalogue here has no storage-optimised entries.
-    expect(size(ask({ cloud: 'gcp', operation: 'join' })).node.shape).toBe('memory');
+    /*
+     * Exercises pickShape's fallback directly rather than through a cloud that
+     * happens to lack the tier today. GCP used to be that cloud; adding c3
+     * local-SSD nodes to the catalogue gave it a storage tier and quietly
+     * stopped this test checking the fallback at all. Constructing the case
+     * keeps it testing the branch it is named after.
+     */
+    const noStorage = nodesFor('gcp').filter((x) => x.shape !== 'storage');
+    expect(noStorage.some((x) => x.shape === 'memory')).toBe(true);
+    expect(pickShape({ ...base, operation: 'join' }, ['balanced', 'memory']).shape)
+      .toBe('memory');
   });
 
   it('picks balanced for a plain scan', () => {
@@ -126,19 +136,26 @@ describe('the answer is always usable', () => {
     expect(hi).toBeGreaterThan(r.estimatedMinutes);
   });
 
-  it('matches the audited TPC-DS benchmark within an order of magnitude', () => {
+  it('matches the audited TPC-DS benchmark on the hardware it was measured on', () => {
     /*
      * The anchor for every throughput constant in this tool.
      *
      * The TPC-DS 100 TB Full Disclosure Report (Databricks SQL 8.3, audited by
      * the TPC council, Nov 2021) loaded 100 TB on 256 x i3.2xlarge - 2,048
-     * vCPU - in 7,929 seconds, which is 6.2 MB per core-second WITH Photon.
+     * vCPU - in 7,929 seconds, which is 6.2 MB per core-second. The FDR names
+     * the engine as "Databricks Photon Engine 8.3" and the processor as a Xeon
+     * E5-2686 v4, so that figure is WITH Photon, on 2016 Broadwell cores.
      *
-     * Asking this tool to move 100 TB in that time should therefore land in
-     * the same neighbourhood as 2,048 cores. It should ask for MORE, because
-     * the tool models the JVM engine rather than Photon (the Photon paper puts
-     * that gap at ~4x on average) and because a bulk load is lighter than a
-     * shuffling query.
+     * The comparison is therefore pinned to those same conditions: Photon on,
+     * i3.2xlarge forced. Anything else is comparing against different hardware
+     * and a different engine, which is what made an earlier version of this
+     * test assert the wrong direction - it expected MORE than 2,048 cores on
+     * the theory that the tool modelled the JVM engine, when the anchor it
+     * compares against had Photon in it all along.
+     *
+     * The tool should still ask for somewhat more than the audit used: a bulk
+     * load is lighter work than the shuffling queries this tool sizes for, and
+     * the base rates are deliberately set toward the pessimistic end.
      *
      * If a change to the constants breaks this, re-derive it from the source
      * rather than widening the bounds to fit.
@@ -149,10 +166,49 @@ describe('the answer is always usable', () => {
     const r = size(ask({
       dataBytes: 100 * TB, format: 'parquet', language: 'sql',
       operation: 'scan', targetMinutes: auditedMinutes,
+      photon: true, nodeTypeId: 'i3.2xlarge',
     }));
 
+    expect(r.node.cpuFactor).toBe(1);
     expect(r.totalCores).toBeGreaterThan(auditedCores);
     expect(r.totalCores).toBeLessThan(auditedCores * 10);
+  });
+
+  it('needs fewer cores on modern silicon than on the anchor hardware', () => {
+    // The whole point of the per-node CPU factor: an Ice Lake core does more
+    // than the 2016 Broadwell core the rate was calibrated on, so the same job
+    // needs fewer of them. Treating all cores as equal over-provisions.
+    const common = {
+      dataBytes: 10 * TB, format: 'parquet', language: 'sql',
+      operation: 'scan', targetMinutes: 60, photon: true,
+    } as const;
+
+    const old = size(ask({ ...common, nodeTypeId: 'i3.2xlarge' }));
+    const modern = size(ask({ ...common, nodeTypeId: 'i4i.2xlarge' }));
+
+    expect(modern.node.cpuFactor).toBeGreaterThan(old.node.cpuFactor);
+    expect(modern.totalCores).toBeLessThan(old.totalCores);
+  });
+
+  it('sizes a non-Photon cluster larger, and says why', () => {
+    // The anchor includes Photon, so turning it off is a penalty. Sized at
+    // NON_PHOTON_SLOWDOWN, this should be a clear step up, not a rounding.
+    const on = size(ask({ language: 'sql', photon: true }));
+    const off = size(ask({ language: 'sql', photon: false }));
+
+    expect(off.totalCores).toBeGreaterThan(on.totalCores);
+    expect(off.notes.join(' ')).toMatch(/Photon is off/i);
+  });
+
+  it('does not charge the Photon penalty twice for a Python UDF', () => {
+    // A UDF already runs outside the JVM at its own much lower rate, and
+    // cannot use Photon either way. Toggling Photon must not change its size,
+    // or the same slowdown is being counted twice.
+    const on = size(ask({ language: 'python-udf', photon: true }));
+    const off = size(ask({ language: 'python-udf', photon: false }));
+
+    expect(off.totalCores).toBe(on.totalCores);
+    expect(on.notes.join(' ')).toMatch(/Photon cannot run a Python UDF/i);
   });
 });
 

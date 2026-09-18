@@ -1,13 +1,24 @@
 # Databricks cluster sizer
 
-Six questions in, one answer out: how many workers of what type, and roughly
+Seven questions in, one answer out: how many workers of what type, and roughly
 how long the job will take.
+
+Use it at **<https://raajasw.github.io/databricks-cluster-sizer/>** — it is a
+static page, so nothing is installed and nothing is sent anywhere. The
+arithmetic runs in your browser.
+
+To run it locally instead:
 
 ```
 npm install
-npm run dev     # http://localhost:5173
+npm run dev     # http://localhost:5173/databricks-cluster-sizer/
 npm test
 ```
+
+npm runs on macOS, Windows and Linux alike; nothing here is platform-specific.
+
+Pushing to `main` rebuilds and redeploys the page automatically, via
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
 
 On Databricks you do not configure executors. You choose a worker node type and
 a count, and Databricks runs one executor per worker and sizes its memory
@@ -23,8 +34,11 @@ Four numbers, multiplied together.
 ### 1. How much work there is
 
 ```
-core-seconds = source_MB / (base_rate / format_cost / operation_cost)
+core-seconds = source_MB / (base_rate / format_cost / operation_cost / photon_cost)
 ```
+
+`photon_cost` is 2 when Photon is off and 1 when it is on — the base rate was
+measured with Photon, so this is a penalty, not a bonus. See below.
 
 Throughput is applied to **source bytes** — the size as stored, before
 decompression — not to the expanded in-memory size. Applying it after expansion
@@ -53,8 +67,12 @@ memory-bound, and the tool says so.
 ### 4. How many workers
 
 ```
-workers = ceil(cores_needed / usable_cores_per_worker)
+workers = ceil(cores_needed / (usable_cores_per_worker × cpu_factor))
 ```
+
+`cores_needed` is counted in the 2016-Broadwell cores the rate was calibrated
+on. A modern core does more work, so `cpu_factor` converts between the two and
+fewer of them are needed.
 
 ---
 
@@ -75,25 +93,73 @@ audited by the TPC council, November 2021):
 | Dataset | **100 TB** |
 | Load time | **7,929 seconds** |
 | Implied rate | **6.2 MB per core-second** |
+| Engine | **Databricks Photon Engine 8.3** |
+| Processor | **Xeon E5-2686 v4** — Broadwell, 2016 |
 
-That is world-record hardware running Photon, Databricks' native vectorized
-engine. The [Photon paper (SIGMOD 2022)][photon] measures Photon against DBR,
-the JVM Spark engine:
+Two things about that anchor have to be said plainly, because this README
+previously got both wrong.
+
+**It already includes Photon.** The FDR names the system under test as the
+Photon engine. So 6.2 MB/core-second is a *Photon* number, and the tool applies
+a penalty when Photon is **off** rather than a bonus when it is on. An earlier
+version of this document read as though Photon were a speedup still to be
+applied on top, which would have counted it twice.
+
+**It expired on 2024-11-01.** The TPC now lists it as a *historical* result, and
+Databricks has not resubmitted at any scale — the current 100 TB leaderboard is
+Tencent Cloud and Alibaba. It is kept as the anchor anyway, because an expired
+audit is still independently verified, which no vendor blog post or customer
+anecdote is. But it predates DBR 17 by four runtime generations. It is an old
+number, honestly labelled, not a current one.
+
+### Photon, and the 4× that is not 4×
+
+The [Photon paper (SIGMOD 2022)][photon] is widely quoted as "4× faster":
 
 > Photon achieves a maximum speedup of 23×, and an **average speedup of 4×**
 > across all queries.
 
-So a job on the JVM engine — which is what you get without Photon, and what any
-Python or Scala UDF forces regardless — runs nearer **1.5 MB per core-second**
-on comparable work.
+That is an average across a query set with a 23× maximum — a different claim
+from "your job is 4× slower without it". Measurements that compare like with
+like, on the same instances, are lower:
 
-The base rates in the tool sit in that range. They are deliberately closer to
-the pessimistic end: under-provisioning shows up as an out-of-memory failure
-three hours into a production run, while over-provisioning costs some money.
-Those are not symmetric.
+| Source | Speedup | |
+|---|---|---|
+| Databricks' own TPC-DS 1 TB | ~2× | vendor, but like-for-like |
+| Independent, identical instances | ~2× | |
+| Intel co-marketing, 1 TB / 10 TB | 3.4× / 6.7× | tuned configuration |
+| Customer-reported workloads | 3–8× | self-selected, unaudited |
 
-A test in [`size.test.ts`](src/simple/size.test.ts) pins the resulting
-ballpark against the audited figure, so drift in the constants fails the suite
+The tool uses **2×**, the independently corroborated figure. That also fails
+safe: if Photon does better than 2× on your job, the cluster is merely larger
+than it needed to be. Photon also does not cover every operator — unsupported
+ones fall back to the JVM engine mid-query — which is a further reason not to
+assume the headline number.
+
+Photon cannot run Python UDFs at all, so for a UDF job the toggle correctly
+changes nothing.
+
+### Processor generation
+
+The anchor ran on 2016 Broadwell cores. Treating those as equal to a current
+core silently over-provisions every cluster built from modern instance types, so
+each node carries a `cpuFactor` relative to the anchor's silicon:
+
+| Generation | Factor |
+|---|---|
+| Broadwell / early Skylake (i3, m5d, r5d) | 1.0 |
+| Cascade Lake (n2, L-series v3) | 1.25 |
+| Ice Lake, Sapphire Rapids, Graviton3 (i4i, m6id, c3) | 1.5 |
+
+AWS documents i4i at [up to 2.7× the per-vCPU throughput of i3][i4i] on
+IO-heavy work and ~1.5× on database work; sizing is closer to the latter, so
+1.5 is used rather than the headline figure. These scale throughput only — a
+faster core usually costs more per hour, and this tool does not price anything.
+
+Four tests in [`size.test.ts`](src/simple/size.test.ts) pin all of this: the
+ballpark against the audited figure on *the hardware it was measured on*, that
+modern silicon needs fewer cores, that Photon-off sizes larger, and that a UDF
+job is unaffected by the Photon toggle. Drift in the constants fails the suite
 rather than passing quietly.
 
 ### Format cost
@@ -152,7 +218,12 @@ memory-bound. Plain scans get balanced nodes.
 
 Node specifications come from the cloud vendors' published instance tables.
 Each cloud has its own catalog — AWS, Azure and GCP share no instance names, so
-recommending an `i3.xlarge` to an Azure workspace would simply be wrong.
+recommending an `i4i.xlarge` to an Azure workspace would simply be wrong.
+
+The catalog lists current-generation instances first (i4i, m6id, r6id, c3, the
+Azure v5 families). The older i3, m5d and r5d entries are kept because plenty of
+workspaces still run them, and because `i3.2xlarge` is the node the throughput
+anchor was measured on.
 
 ---
 
@@ -178,6 +249,7 @@ Every tool in this space has the same limitation. The ones that do not show
 their workings simply hide it.
 
 [fdr]: https://www.tpc.org/results/fdr/tpcds/databricks~tpcds~100000~databricks_sql_8.3~fdr~2021-11-02~v01.pdf
+[i4i]: https://aws.amazon.com/ec2/instance-types/i4i/
 [photon]: https://people.eecs.berkeley.edu/~matei/papers/2022/sigmod_photon.pdf
 [best-practices]: https://docs.databricks.com/aws/en/compute/cluster-config-best-practices
 [udf]: https://medium.com/quantumblack/spark-udf-deep-insights-in-performance-f0a95a4d8c62

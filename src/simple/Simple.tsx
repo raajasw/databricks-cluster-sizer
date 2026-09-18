@@ -1,5 +1,5 @@
 /**
- * Six questions, one answer.
+ * Seven questions, one answer.
  */
 
 import { useState, useMemo } from 'react';
@@ -16,6 +16,7 @@ const DEFAULT: Answers = {
   language: 'python-sql',
   operation: 'join',
   targetMinutes: 60,
+  photon: true,
 };
 
 /** Accepts "500", "500gb", "2 TB", "1.5tb". Plain numbers are read as GB. */
@@ -44,7 +45,7 @@ export default function Simple() {
     <div className="wrap">
       <header>
         <h1>How many workers?</h1>
-        <p>Databricks cluster sizing, in six questions.</p>
+        <p>Databricks cluster sizing, in seven questions.</p>
       </header>
 
       <section className="form">
@@ -101,6 +102,31 @@ export default function Simple() {
         </div>
 
         <div className="q">
+          <label>Is Photon on?</label>
+          <div className="seg">
+            <button
+              className={a.photon !== false ? 'on' : ''}
+              onClick={() => set({ photon: true })}
+            >
+              On
+            </button>
+            <button
+              className={a.photon === false ? 'on' : ''}
+              onClick={() => set({ photon: false })}
+            >
+              Off
+            </button>
+          </div>
+          <small>
+            {a.language === 'python-udf'
+              ? 'Photon cannot run Python UDFs, so this makes no difference to the ' +
+                'size of this particular cluster.'
+              : 'The throughput here is calibrated on a Photon benchmark, so turning ' +
+                'it off roughly doubles the cluster.'}
+          </small>
+        </div>
+
+        <div className="q">
           <label>What is the heaviest thing it does?</label>
           <select value={a.operation} onChange={(e) => set({ operation: e.target.value as Operation })}>
             <option value="scan">Read and filter</option>
@@ -134,7 +160,7 @@ export default function Simple() {
           <span className="node">{r.node.id}</span>
         </div>
         <div className="spec">
-          {r.node.cores} cores · {fmtBytes(r.node.memoryBytes)} RAM
+          {r.node.cores} cores · {fmtBytes(r.node.memoryBytes)} RAM · {r.node.cpu}
           {r.node.localSsd ? ' · local SSD' : ''} — {r.nodeReason}
         </div>
         <div className="runtime">
@@ -152,7 +178,7 @@ export default function Simple() {
             <option value="">Let the tool choose</option>
             {catalog.map((nd) => (
               <option key={nd.id} value={nd.id}>
-                {nd.id} — {nd.cores} cores, {fmtBytes(nd.memoryBytes)}
+                {nd.id} — {nd.cores} cores, {fmtBytes(nd.memoryBytes)}, {nd.cpu}
               </option>
             ))}
           </select>
