@@ -1,3 +1,6 @@
+<not suitable for production use. Repo is not actively maintained>
+
+
 # Databricks cluster sizer
 
 Seven questions in, one answer out: how many workers of what type, and roughly
